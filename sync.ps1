@@ -4,11 +4,13 @@
     把 D:\standards 的真源分发到各个 agent 的挂载点。
 
 .DESCRIPTION
-    1) skill  -> ~/.agents/skills/code-standards        （DSH/Hermes 全局技能，自动发现）
+    1) skill  -> ~/.agents/skills/<技能名>              （DSH/Hermes 全局技能，自动发现）
+   1b) skill  -> ~/.workbuddy/skills/<技能名>           （WorkBuddy 全局技能，自动发现）
     2) 规则   -> ~/.config/opencode/AGENTS.md           （OpenCode 全局规则，标记块合并）
     3) 规则   -> ~/.cursor/rules/code-standards.mdc     （Cursor 全局规则，alwaysApply）
     4) hooks  -> git 全局 core.hooksPath               （pre-commit 规模门禁）
-    5) 可选   -> <Project>\AGENTS.md                    （项目级短 stub，标记块合并）
+    5) 可选   -> <Project>\AGENTS.md                    （项目级短 stub，标记块合并；
+                                                          WorkBuddy 也读项目根的 AGENTS.md）
 
     标记块合并：只替换 <!-- code-standards:begin --> 与 <!-- code-standards:end --> 之间的内容，
     文件其余部分原样保留。
@@ -59,16 +61,38 @@ function Set-MarkedBlock {
 $skillRoot = Join-Path $Source "skill"
 if (-not (Test-Path -LiteralPath $skillRoot)) { throw "找不到源目录: $skillRoot" }
 
+# 每个挂载点：Root 为技能根目录，Label 用于汇总输出
+$skillTargets = @(
+    [pscustomobject]@{ Label = "agents";    Root = (Join-Path $env:USERPROFILE ".agents\skills") },
+    [pscustomobject]@{ Label = "workbuddy"; Root = (Join-Path $env:USERPROFILE ".workbuddy\skills") }
+)
+
+function Sync-SkillTree {
+    param([string]$SkillDir, [string]$Root, [string]$Name)
+    $dst = Join-Path $Root $Name
+    $rc = (robocopy $SkillDir $dst /MIR /NFL /NDL /NJH /NJS /NP) 2>&1
+    if ($LASTEXITCODE -ge 8) {
+        throw ("robocopy 失败（{0}）: {1} -> {2}`n{3}" -f $LASTEXITCODE, $Name, $dst, $rc)
+    }
+}
+
 $syncedSkills = @()
-foreach ($dir in (Get-ChildItem -LiteralPath $skillRoot -Directory)) {
-    if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName "SKILL.md"))) {
-        Write-Host ("  跳过（没有 SKILL.md）: {0}" -f $dir.Name) -ForegroundColor DarkYellow
+$skillReports = @()
+foreach ($target in $skillTargets) {
+    $parent = Split-Path -Parent $target.Root
+    if (-not (Test-Path -LiteralPath $parent)) {
+        $skillReports += [pscustomobject]@{ Label = $target.Label; Text = ("未安装（没有 {0}）" -f $parent) }
         continue
     }
-    $dst = Join-Path $env:USERPROFILE (".agents\skills\" + $dir.Name)
-    $rc = (robocopy $dir.FullName $dst /MIR /NFL /NDL /NJH /NJS /NP) 2>&1
-    if ($LASTEXITCODE -ge 8) { throw ("robocopy 失败（{0}）: {1} -> {2}`n{3}" -f $LASTEXITCODE, $dir.Name, $dst, $rc) }
-    $syncedSkills += $dir.Name
+    foreach ($dir in (Get-ChildItem -LiteralPath $skillRoot -Directory)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName "SKILL.md"))) {
+            Write-Host ("  跳过（没有 SKILL.md）: {0}" -f $dir.Name) -ForegroundColor DarkYellow
+            continue
+        }
+        Sync-SkillTree -SkillDir $dir.FullName -Root $target.Root -Name $dir.Name
+        if ($target.Label -eq "agents") { $syncedSkills += $dir.Name }
+    }
+    $skillReports += [pscustomobject]@{ Label = $target.Label; Text = ("{0} 个技能" -f $syncedSkills.Count) }
 }
 if ($syncedSkills.Count -eq 0) { throw "skill\ 下没有可同步的技能目录" }
 
@@ -158,7 +182,10 @@ if ($Project) {
 # ---------- 汇总 ----------
 Write-Host ""
 Write-Host "同步完成" -ForegroundColor Green
-Write-Host ("  skill      -> {0}  ({1})" -f (Join-Path $env:USERPROFILE ".agents\skills"), ($syncedSkills -join ", "))
+Write-Host ("  skill      -> {0}" -f ($syncedSkills -join ", "))
+foreach ($report in $skillReports) {
+    Write-Host ("  {0,-10} -> {1}" -f $report.Label, $report.Text)
+}
 Write-Host ("  opencode   -> {0}  ({1})" -f $opencodeRules, $r1)
 Write-Host ("  cursor     -> {0}  ({1})" -f (Join-Path $env:USERPROFILE ".cursor\rules\code-standards.mdc"), $r2)
 Write-Host ("  git hooks  -> {0}  ({1})" -f $hooksDir, $rHooks)

@@ -25,12 +25,13 @@ standards/
 ```
 
 > `sync.ps1` 会遍历 `skill\` 下的**所有子目录**（只要有 `SKILL.md`），逐个镜像到
-> `~\.agents\skills\<名字>\`。新增技能只要建个目录放 `SKILL.md`，再跑一次同步即可。
+> `~\.agents\skills\<名字>\` 和 `~\.workbuddy\skills\<名字>\`。新增技能只要建个目录放
+> `SKILL.md`，再跑一次同步即可。
 
 ## 安装 / 更新
 
 ```powershell
-pwsh D:\standards\sync.ps1                    # 分发到 DSH + OpenCode + Cursor + git 全局钩子
+pwsh D:\standards\sync.ps1                    # 分发到 DSH + WorkBuddy + OpenCode + Cursor + git 全局钩子
 pwsh D:\standards\sync.ps1 -Project D:\proj   # 额外给某个项目放 AGENTS.md stub
 pwsh D:\standards\sync.ps1 -SkipHooks         # 不安装/不覆盖 git core.hooksPath
 ```
@@ -45,13 +46,15 @@ pwsh D:\standards\sync.ps1 -SkipHooks         # 不安装/不覆盖 git core.hoo
 | Agent | 路径 | 机制 |
 |---|---|---|
 | DSH / Hermes | `~\.agents\skills\<技能名>\` | 全局技能，自动发现（`skill\` 下所有目录） |
+| WorkBuddy | `~\.workbuddy\skills\<技能名>\` | 全局技能，启动时扫 `SKILL.md`（同样自动发现） |
 | OpenCode | `~\.config\opencode\AGENTS.md` | 全局规则，标记块合并 |
 | Cursor | `~\.cursor\rules\code-standards.mdc` | `alwaysApply: true` |
-| 任意项目 | `<repo>\AGENTS.md` | 项目级 stub（2k 字符内） |
+| 任意项目 | `<repo>\AGENTS.md` | 项目级 stub（2k 字符内；WorkBuddy 也读它） |
 | 任意 git 仓库 | `~\.config\git\config` → `core.hooksPath` | 全局 pre-commit（`D:\standards\hooks`） |
 
 > 为什么不放 `~\AGENTS.md`：Hermes/DSH 的上下文文件是 **cwd-only、first-match-wins**，
-> home 级 AGENTS.md 不会跨项目生效；跨项目规则必须走 skill。
+> home 级 AGENTS.md 不会跨项目生效；跨项目规则必须走 skill。WorkBuddy 同理，只认项目根
+> 的 `CODEBUDDY.md` / `.codebuddy\CODEBUDDY.md` / `AGENTS.md`，所以它也走全局 skill 分发。
 
 ## 在项目里启用
 
@@ -109,7 +112,7 @@ pwsh D:\standards\skill\code-standards\scripts\check-limits.ps1 -Path . -NoFail
 
 1. 改 `skill/code-standards/` 下的文件
 2. `git commit`（建议把这个目录纳入版本管理）
-3. `pwsh sync.ps1` 分发（技能 + 全局规则 + Cursor + git 钩子）
+3. `pwsh sync.ps1` 分发（技能 + 全局规则 + Cursor + WorkBuddy + git 钩子）
 4. 重启 agent 会话让 skill 重新加载
 
 ## 审查节奏（R11）
