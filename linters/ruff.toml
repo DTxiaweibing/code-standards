@@ -1,0 +1,33 @@
+# 全局 Python 规范（Ruff 0.5+）
+# 用法：ruff check --config standards/linters/ruff.toml .
+# 文件长度（≤500）由 scripts/check-limits.ps1 或 pylint --max-module-lines=500 兜底，
+# 因为 Ruff 目前没有文件级行数规则。
+
+line-length = 100
+indent-width = 4
+target-version = "py311"
+
+[lint]
+select = [
+    "E4",    # import 相关
+    "E7",    # 语句问题
+    "E9",    # 运行时错误
+    "F",     # pyflakes
+    "C901",  # 圈复杂度
+    "PLR0912",  # 分支过多
+    "PLR0915",  # 语句过多（≈ 函数过长）
+    "SIM",   # 可简化写法
+]
+ignore = [
+    "E501",  # 行宽由 formatter 处理
+]
+
+[lint.mccabe]
+max-complexity = 15
+
+[lint.pylint]
+max-statements = 50
+max-branches = 12
+
+[lint.isort]
+known-first-party = ["app", "src"]

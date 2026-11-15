@@ -1,0 +1,12 @@
+#!/bin/sh
+# 全局 pre-commit 入口：交给同目录的 pre-commit.ps1 做规模检查。
+# 找不到 PowerShell 时放行，避免把提交卡死。
+HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if command -v pwsh >/dev/null 2>&1; then
+  exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$HOOK_DIR/pre-commit.ps1"
+fi
+if command -v powershell.exe >/dev/null 2>&1; then
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$HOOK_DIR/pre-commit.ps1"
+fi
+echo "code-standards: 未找到 PowerShell，跳过规模检查" >&2
+exit 0
