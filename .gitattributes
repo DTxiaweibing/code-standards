@@ -1,0 +1,3 @@
+* text=auto
+# git 钩子必须保持 LF，否则 Git Bash 里会报 bad interpreter
+hooks/pre-commit text eol=lf
