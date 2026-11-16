@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 全局 pre-commit 门禁：只检查本次提交涉及的代码文件，不扫全仓。
 
@@ -19,7 +19,9 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
 
 $HookDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Checker = [System.IO.Path]::GetFullPath((Join-Path $HookDir '..\skill\code-standards\scripts\check-limits.ps1'))
+# Join-Path 逐级拼接：兼容 PowerShell 5.1 与 pwsh 7，且跨平台
+$Checker = [System.IO.Path]::GetFullPath(
+    (Join-Path (Join-Path (Join-Path (Join-Path $HookDir '..') 'skill') 'code-standards') 'scripts/check-limits.ps1'))
 $MaxFileLines = 500
 $MaxFuncLines = 50
 $CodeExts = @(
@@ -54,7 +56,7 @@ function Get-ViolationMap {
 function Get-HeadViolationMap {
     param([string]$RelPath)
     $suffix = [System.IO.Path]::GetExtension($RelPath)
-    $tmp = Join-Path $env:TEMP ('cs-head-' + [guid]::NewGuid().ToString('N') + $suffix)
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('cs-head-' + [guid]::NewGuid().ToString('N') + $suffix)
     try {
         $raw = & git show "HEAD:$RelPath" 2>$null
         $text = if ($raw -is [array]) { $raw -join "`n" } else { [string]$raw }
@@ -108,9 +110,26 @@ function Write-GateFailure {
     Write-Host '[code-standards] 提交被拦截：' -ForegroundColor Red
     foreach ($item in $Problems) { Write-Host "  - $item" -ForegroundColor Yellow }
     Write-Host ''
-    Write-Host '处理：拆分/提取出小文件或小函数后重试；一次性交付物按 R10 在文件首行写 standards-exempt。' -ForegroundColor Cyan
+    Write-Host '处理：拆分/提取出小文件或小函数后重试；一次性交付物按 R10 在文件前 5 行写 standards-exempt。' -ForegroundColor Cyan
+    Write-Host '密钥类问题：从暂存区移除、轮换凭据，然后重试。' -ForegroundColor Cyan
     Write-Host '确实要跳过本次检查：git commit --no-verify' -ForegroundColor DarkGray
     Write-Host ''
+}
+
+# 密钥扫描：装了 gitleaks 才跑；发现疑似密钥视为 P0，直接拦
+function Test-StagedSecrets {
+    param($Problems)
+    if (-not (Get-Command gitleaks -ErrorAction SilentlyContinue)) {
+        Write-Host '[code-standards] 未安装 gitleaks，跳过密钥扫描（R12 建议安装）' -ForegroundColor DarkYellow
+        return
+    }
+    & gitleaks protect --staged --redact --no-banner
+    $code = $LASTEXITCODE
+    if ($code -eq 1) {
+        $Problems.Add('检测到疑似密钥（gitleaks），见上方输出（R12）')
+    } elseif ($code -ne 0) {
+        Write-Host "[code-standards] gitleaks 运行异常（退出码 $code），本次跳过密钥扫描" -ForegroundColor DarkYellow
+    }
 }
 
 $repoRoot = & git rev-parse --show-toplevel 2>$null
@@ -119,10 +138,12 @@ if (-not $repoRoot) { exit 0 }
 Push-Location $repoRoot
 try {
     if (-not (Test-Path -LiteralPath $Checker)) {
-        Write-Host "[code-standards] 找不到检查脚本，跳过：$Checker" -ForegroundColor DarkYellow
-        exit 0
+        Write-Host "[code-standards] 找不到检查脚本，判定失败：$Checker" -ForegroundColor Red
+        Write-Host '修复：确认 hooks 与 skill 目录处于同一 standards 仓库内，或重跑 sync.ps1。' -ForegroundColor Yellow
+        exit 1
     }
     $problems = New-Object System.Collections.Generic.List[string]
+    Test-StagedSecrets -Problems $problems
     foreach ($row in (Get-StagedRows)) {
         $parts = $row -split "`t"
         if ($parts.Count -lt 2) { continue }

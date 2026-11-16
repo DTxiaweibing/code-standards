@@ -7,6 +7,10 @@
   全局 Java 规范（Checkstyle 10+）
   用法：checkstyle -c standards/linters/checkstyle.xml src/
   与 R2/R3 对齐：方法 ≤ 50 行、文件 ≤ 500 行。
+
+  注意：Checkstyle 的 FileLength / MethodLength 计的是物理行（注释也计入），
+  与 R2 的“有效代码行”口径略有差异。判定以 scripts/check-limits.ps1 为唯一仲裁，
+  这里的阈值是近似护栏（偏严，不会放过问题）。
 -->
 <module name="Checker">
     <property name="charset" value="UTF-8"/>
@@ -51,9 +55,7 @@
         <module name="NeedBraces"/>
         <module name="LeftCurly"/>
         <module name="RightCurly"/>
-        <module name="EmptyCatchBlock">
-            <property name="exceptionVariableName" value="expected|ignored"/>
-        </module>
+        <module name="EmptyCatchBlock"/>
         <module name="EmptyStatement"/>
         <module name="EqualsHashCode"/>
         <module name="SimplifyBooleanExpression"/>

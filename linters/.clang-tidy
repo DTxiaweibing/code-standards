@@ -1,5 +1,7 @@
 # 全局 C/C++ 规范（clang-tidy 18+）
 # 用法：clang-tidy -p build --config-file=standards/linters/.clang-tidy src/*.cc
+# 注意：readability-function-size.LineThreshold 计物理行（含注释），
+#       与 R2 的“有效代码行”口径略有差异；仲裁以 scripts/check-limits.ps1 为准。
 Checks: >
   -*,
   bugprone-*,

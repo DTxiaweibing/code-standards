@@ -1,10 +1,13 @@
 // 全局代码规范的 ESLint 规则（flat config，ESLint 9+）
+// 本文件只覆盖 JS/JSX（默认 espree 解析器，零依赖）。
+// TS/TSX 需要 @typescript-eslint/parser，见同目录的 eslint.ts.overlay.mjs。
+//
 // 用法：项目里 import 本文件，或把 rules 段合并进现有配置。
-// 不依赖任何插件；如需 TS 类型检查再叠加 typescript-eslint。
+// 行数口径以 scripts/check-limits.ps1 为准；这里 skipBlankLines + skipComments 是近似。
 
 export default [
   {
-    files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+    files: ['**/*.{js,jsx,mjs,cjs}'],
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
@@ -37,16 +40,8 @@ export default [
     },
   },
   {
-    // 声明式 UI：组件函数允许略长，但仍受 max-lines 约束；
-    // 真正的拆分要求由人工评审 + R2 的“build() ≤ 50 行”把关。
-    files: ['**/*.{tsx,jsx}'],
-    rules: {
-      'max-lines-per-function': ['off'],
-    },
-  },
-  {
     // 测试：允许长用例
-    files: ['**/*.{test,spec}.{ts,tsx,js,jsx}', '**/__tests__/**'],
+    files: ['**/*.{test,spec}.{js,jsx,mjs,cjs}', '**/__tests__/**'],
     rules: {
       'max-lines-per-function': 'off',
     },

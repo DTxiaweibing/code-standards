@@ -60,5 +60,7 @@ try {
 ## 与本规范的接口
 
 - `max-lines` = 500、`max-lines-per-function` = 50（见 `linters/eslint.config.mjs`）
+- TS 需要 `@typescript-eslint/parser`，追加配置见 `linters/eslint.ts.overlay.mjs`（含 `no-explicit-any`）
+- 行数判定以 `scripts/check-limits.ps1` 为准，ESLint 阈值是近似护栏
 - 生成代码（`*.gen.ts`、`*.d.ts`）豁免 R2/R3
 - 一次性 HTML demo 豁免 R3/R4（见 `exceptions.md`）

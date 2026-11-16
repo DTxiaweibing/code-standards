@@ -107,7 +107,8 @@ if ($ledgerPath -and (Test-Path -LiteralPath $ledgerPath)) {
         $n = [int]$m.Groups[1].Value
         if ($n -gt $maxId) { $maxId = $n }
 
-        $cells = $line.Trim('|') -split '\|'
+        # 写入时把 | 转义成 \|，这里要用负向后顾避免把它当成列分隔符
+        $cells = $line.Trim('|') -split '(?<!\\)\|'
         if ($cells.Count -lt 6) { continue }
         $cat = $cells[2].Trim()
         $loc = $cells[3].Trim().Trim('`')

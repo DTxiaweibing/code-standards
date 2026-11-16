@@ -2,6 +2,7 @@
 # 用法：ruff check --config standards/linters/ruff.toml .
 # 文件长度（≤500）由 scripts/check-limits.ps1 或 pylint --max-module-lines=500 兜底，
 # 因为 Ruff 目前没有文件级行数规则。
+# 注意：PLR0915 计的是“语句数”而非行数，与 R2 口径不同；仲裁以 check-limits.ps1 为准。
 
 line-length = 100
 indent-width = 4

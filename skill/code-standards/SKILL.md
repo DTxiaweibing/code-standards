@@ -1,7 +1,7 @@
 ---
 name: code-standards
-description: Enforce code size, structure, and naming rules.
-version: 0.1.0
+description: Enforce code size, structure, naming, error handling, security, testing, and dependency rules.
+version: 0.2.0
 author: DTxiaweibing, DeepSeek Harness
 license: MIT
 platforms: [windows, linux, macos]
@@ -25,9 +25,10 @@ metadata:
 
 ## 优先级（R0）
 
-1. 项目根 `AGENTS.md` 里的显式约定
-2. 本规范
-3. 技能自带的模板/示例代码
+1. **安全与合规（R12）**——任何项目约定都不得降级
+2. 项目根 `AGENTS.md` 里的显式约定
+3. 本规范
+4. 技能自带的模板/示例代码
 
 冲突时上层覆盖下层，并在回答里一句话说明依据。任何人不得用"技能让我这么写"来抵消本规范。
 
@@ -46,8 +47,12 @@ metadata:
 
 **禁止**用压缩空行、塞进一行、内联匿名函数来规避计数。
 
+**行数口径（唯一）**：有效行 = 总行数 − 空行 − 纯注释行 − 仅含 `}` `)` `]` `};` 等收尾符号的行。
+`scripts/check-limits.ps1` 是唯一仲裁；eslint / checkstyle / clang-tidy 的阈值是近似护栏，
+它们与口径的差异（如 Checkstyle 会把注释计入）只在仲裁脚本不可用时参考。
+
 ### R3 文件长度（≤ 500 行）
-单文件 **≤ 500 行**。存量文件不强制重写，但**改动时不得净增长**；新增功能必须落到新文件。
+单文件 **≤ 500 行**（口径同 R2）。存量文件不强制重写，但**改动时不得净增长**；新增功能必须落到新文件。
 
 ### R4 模块边界（一模块一目录）
 一个模块 = 一个目录，目录内只有一个对外入口（`index.ts` / `__init__.py` / `mod.rs` / 包内唯一 public 类）。
@@ -79,7 +84,7 @@ UI → 应用/用例 → 领域 → 基础设施（依赖倒置）。领域层�
 改完代码必须跑 `scripts/check-limits.ps1`（或项目里的 linter），把超限项处理掉或明确豁免。结果写进提交说明或回复。
 
 ### R10 豁免
-文件顶部一条：`// standards-exempt: <具体理由>`（Python 用 `#`）。**一个文件只允许一条**，理由必须具体（"这是生成的 protobuf 代码"可以，"临时方便"不行）。评审有权拒绝。
+文件**前 5 行内**一条：`// standards-exempt: <具体理由>`（Python 用 `#`）。**一个文件只允许一条**，理由必须具体（"这是生成的 protobuf 代码"可以，"临时方便"不行）。评审有权拒绝。
 
 ### R11 审查节奏
 不等到项目结束才审，也不逐行审。按“可评审单元”分四层：
@@ -96,6 +101,22 @@ UI → 应用/用例 → 领域 → 基础设施（依赖倒置）。领域层�
 - 每次审查必须更新台账 `.review/ledger.md`，否则视为未完成
 - 只改文案/注释/格式且 L0 无变化时，可跳过 L1
 
+### R12 安全
+密钥不入库（提交前 gitleaks 扫描）；外部输入在边界校验；SQL 参数化、输出转义；认证授权只在服务端判定；
+日志与错误响应不得包含密钥/PII/完整堆栈；否定路径必须 fail-closed。
+安全条款**不可被项目约定降级**。完整清单与工具见 `references/security.md`。
+
+### R13 测试
+改业务逻辑必须带测试；修 bug 先写能复现的失败用例。一个用例只断言一个行为，必测正常、边界、错误路径、权限。
+禁止 `sleep` 等待、依赖真实网络/时间/随机、用例间共享状态。新增/修改代码行覆盖 ≥ 70%，
+核心领域（钱、权限、状态机）≥ 85%。测试文件不受 R2 限制（E3），但仍需可读。
+完整要求与命令见 `references/testing.md`。
+
+### R14 依赖与供应链
+lockfile 必须提交；新增依赖必须说明理由、许可证与传递依赖；许可证白名单外需人工批准；
+有高危 CVE 的依赖直接拒绝；大版本升级单独 PR；安全更新按月跟进。
+完整清单与工具见 `references/dependencies.md`。
+
 ## 提交前清单
 
 - [ ] 没有函数 > 50 行
@@ -104,6 +125,9 @@ UI → 应用/用例 → 领域 → 基础设施（依赖倒置）。领域层�
 - [ ] 没有跨模块深层 import
 - [ ] 没有空 catch / 吞异常
 - [ ] 公共 API 有注释，TODO 有归属
+- [ ] 没有硬编码密钥（gitleaks 通过）
+- [ ] 改动的业务逻辑有测试
+- [ ] 新增依赖已检查漏洞与许可证，lockfile 已提交
 - [ ] `check-limits.ps1` 通过（或已按 R10 豁免）
 
 ## 语言细则
@@ -115,8 +139,11 @@ UI → 应用/用例 → 领域 → 基础设施（依赖倒置）。领域层�
 | Java | `references/java.md` |
 | C / C++ | `references/cpp.md` |
 | ArkTS / ArkUI | `references/arkts.md` |
+| 安全 | `references/security.md` |
+| 测试 | `references/testing.md` |
+| 依赖与供应链 | `references/dependencies.md` |
 | 豁免与例外 | `references/exceptions.md` |
-| 审查门禁与台账 | eferences/review-gate.md |
+| 审查门禁与台账 | `references/review-gate.md` |
 
 ## 反模式（见到就改）
 

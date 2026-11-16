@@ -7,7 +7,8 @@
     对应规范 R2（函数 ≤50 行）与 R3（文件 ≤500 行）。
     语言：TS/JS/Java/Kotlin/C/C++/C#/Go/Rust 走大括号匹配；Python 走缩进块。
     只做规模审计，不做风格检查（风格交给 eslint/checkstyle/clang-tidy/ruff）。
-    豁免：文件首行含 standards-exempt 的文件直接跳过。
+    豁免：文件前 5 行内出现 standards-exempt 的文件直接跳过
+          （前 5 行是为了让 shebang / PEP 263 编码声明 / #Requires 能占第一行）。
 
 .PARAMETER Path
     要扫描的目录或文件，默认当前目录。
@@ -93,14 +94,30 @@ function Test-IsFunctionHead {
     return $false
 }
 
+function Get-CommentPrefixes {
+    param([string]$Extension)
+    # Python 用 #；C/C++ 的 # 是预处理指令（算代码），不能当注释
+    if ($Extension -eq '.py') { return @('#') }
+    return @('//', '/*', '*/', '*')
+}
+
 function Get-EffectiveLineCount {
-    param([string[]]$Lines, [int]$Start, [int]$End)
+    param(
+        [string[]]$Lines,
+        [int]$Start,
+        [int]$End,
+        [string[]]$CommentPrefixes = @('//', '/*', '*/', '*')
+    )
     $n = 0
     for ($i = $Start; $i -le $End -and $i -le $Lines.Count; $i++) {
         $l = $Lines[$i - 1].Trim()
         if ($l -eq '') { continue }
-        if ($l.StartsWith('//') -or $l.StartsWith('#') -or $l.StartsWith('/*') -or
-            $l.StartsWith('*') -or $l.StartsWith('*/') -or $l.StartsWith('--')) { continue }
+        if ($l.StartsWith('#!')) { continue }
+        $isComment = $false
+        foreach ($prefix in $CommentPrefixes) {
+            if ($l.StartsWith($prefix)) { $isComment = $true; break }
+        }
+        if ($isComment) { continue }
         if ($l -match '^[\}\)\];,]+$') { continue }
         $n++
     }
@@ -108,7 +125,7 @@ function Get-EffectiveLineCount {
 }
 
 function Get-BraceFunctions {
-    param([string[]]$Lines, [int]$MaxFunc)
+    param([string[]]$Lines, [int]$MaxFunc, [string[]]$CommentPrefixes = @('//', '/*', '*/', '*'))
     $results = New-Object System.Collections.Generic.List[object]
     $stack = New-Object System.Collections.Generic.List[object]
     $inBlock = $false
@@ -126,7 +143,7 @@ function Get-BraceFunctions {
                 $stack.RemoveAt($stack.Count - 1)
                 if (Test-IsFunctionHead -Text $frame.Text) {
                     $len = ($i + 1) - $frame.Line + 1
-                    $eff = Get-EffectiveLineCount -Lines $Lines -Start $frame.Line -End ($i + 1)
+                    $eff = Get-EffectiveLineCount -Lines $Lines -Start $frame.Line -End ($i + 1) -CommentPrefixes $CommentPrefixes
                     if ($eff -gt $MaxFunc) {
                         $name = $frame.Text.Trim()
                         if ($name.Length -gt 60) { $name = $name.Substring(0, 60) + '…' }
@@ -140,7 +157,7 @@ function Get-BraceFunctions {
 }
 
 function Get-PythonFunctions {
-    param([string[]]$Lines, [int]$MaxFunc)
+    param([string[]]$Lines, [int]$MaxFunc, [string[]]$CommentPrefixes = @('#'))
     $results = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         $m = [regex]::Match($Lines[$i], '^(\s*)(async\s+)?def\s+([A-Za-z_]\w*)\s*\(')
@@ -157,7 +174,7 @@ function Get-PythonFunctions {
                 break
             }
         }
-        $eff = Get-EffectiveLineCount -Lines $Lines -Start ($i + 1) -End $end
+        $eff = Get-EffectiveLineCount -Lines $Lines -Start ($i + 1) -End $end -CommentPrefixes $CommentPrefixes
         if ($eff -gt $MaxFunc) {
             $results.Add([pscustomobject]@{ Line = ($i + 1); Lines = $eff; Signature = "def $name(...)" }) | Out-Null
         }
@@ -185,11 +202,21 @@ $skipped = 0
 foreach ($f in $targets) {
     $lines = [System.IO.File]::ReadAllLines($f.FullName, [System.Text.Encoding]::UTF8)
     if ($lines.Count -eq 0) { continue }
-    if ($lines[0] -match 'standards-exempt') { $skipped++; continue }
+
+    # 豁免声明允许出现在前 5 行：兼容 shebang / PEP 263 / #Requires
+    $isExempt = $false
+    $headCount = [Math]::Min(5, $lines.Count)
+    for ($h = 0; $h -lt $headCount; $h++) {
+        if ($lines[$h] -match 'standards-exempt') { $isExempt = $true; break }
+    }
+    if ($isExempt) { $skipped++; continue }
+
+    $ext = $f.Extension.ToLower()
+    $commentPrefixes = Get-CommentPrefixes -Extension $ext
 
     $scanned++
     $raw = $lines.Count
-    $eff = Get-EffectiveLineCount -Lines $lines -Start 1 -End $raw
+    $eff = Get-EffectiveLineCount -Lines $lines -Start 1 -End $raw -CommentPrefixes $commentPrefixes
     if ($eff -gt $MaxFileLines) {
         $fileViolations.Add([pscustomobject]@{
             File = $f.FullName; RawLines = $raw; EffectiveLines = $eff; Over = $eff - $MaxFileLines
@@ -197,10 +224,10 @@ foreach ($f in $targets) {
     }
 
     $funcs = @()
-    if ($f.Extension.ToLower() -eq '.py') {
-        $funcs = Get-PythonFunctions -Lines $lines -MaxFunc $MaxFuncLines
+    if ($ext -eq '.py') {
+        $funcs = Get-PythonFunctions -Lines $lines -MaxFunc $MaxFuncLines -CommentPrefixes $commentPrefixes
     } else {
-        $funcs = Get-BraceFunctions -Lines $lines -MaxFunc $MaxFuncLines
+        $funcs = Get-BraceFunctions -Lines $lines -MaxFunc $MaxFuncLines -CommentPrefixes $commentPrefixes
     }
     foreach ($fn in $funcs) {
         $funcViolations.Add([pscustomobject]@{

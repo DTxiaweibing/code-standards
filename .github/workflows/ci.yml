@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  standards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checker golden tests
+        shell: pwsh
+        run: ./tests/run-tests.ps1
+
+      - name: Docs consistency
+        shell: pwsh
+        run: ./tests/check-docs.ps1
+
+      - name: ShellCheck pre-commit entry
+        run: shellcheck hooks/pre-commit
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
