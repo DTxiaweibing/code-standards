@@ -13,6 +13,8 @@
       - C/C++ 预处理指令 # 计入代码（不是注释）
       - 豁免声明在第 1 行、shebang 之后的第 2 行都能识别
       - 未豁免的长函数仍会报错（对照组）
+      - 模板串 / C++ 原生串的单个花括号不破坏函数帧（两个方向都不漏报）
+      - C 的解引用行计入代码，块注释续行仍算注释
 
 .EXAMPLE
     pwsh ./tests/run-tests.ps1
@@ -107,6 +109,21 @@ Test-Case -Name 'shebang 后第 2 行豁免被跳过' -Fixture 'exemption/exempt
     -MaxFile 500 -MaxFunc 3 -Scanned 0 -Skipped 1 -FileHits 0 -FuncHits 0
 
 Test-Case -Name '未豁免的长函数仍被拦截（对照组）' -Fixture 'exemption/not_exempt_long.ts' `
+    -MaxFile 500 -MaxFunc 3 -Scanned 1 -Skipped 0 -FileHits 0 -FuncHits 1
+
+Test-Case -Name '模板串里的 { 不破坏函数帧（不再漏报）' -Fixture 'ts/template_brace.ts' `
+    -MaxFile 500 -MaxFunc 3 -Scanned 1 -Skipped 0 -FileHits 0 -FuncHits 1
+
+Test-Case -Name '模板串里的 } 不提前弹帧（不再少算）' -Fixture 'ts/template_close.ts' `
+    -MaxFile 500 -MaxFunc 3 -Scanned 1 -Skipped 0 -FileHits 0 -FuncHits 1
+
+Test-Case -Name 'C 解引用行计入代码（不再当块注释）' -Fixture 'cpp/pointer_lines.c' `
+    -MaxFile 500 -MaxFunc 3 -Scanned 1 -Skipped 0 -FileHits 0 -FuncHits 1
+
+Test-Case -Name '块注释续行仍不算代码' -Fixture 'cpp/block_comment.c' `
+    -MaxFile 500 -MaxFunc 3 -Scanned 1 -Skipped 0 -FileHits 0 -FuncHits 0
+
+Test-Case -Name 'C++ 原生字符串里的花括号不参与匹配' -Fixture 'cpp/raw_string.cpp' `
     -MaxFile 500 -MaxFunc 3 -Scanned 1 -Skipped 0 -FileHits 0 -FuncHits 1
 
 Write-Host ""

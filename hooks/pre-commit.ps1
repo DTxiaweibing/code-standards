@@ -4,8 +4,8 @@
 
 判定与 R2 / R3 / R10 对齐：
   - 新文件：文件有效行 > 500 或函数 > 50 直接拦。
-  - 存量文件：不要求重写；本次越过 500 行、或已超限文件继续变长、或新增超限函数才拦。
-  - 文件首行含 standards-exempt 的由 check-limits.ps1 自行跳过。
+  - 存量文件：不要求重写；本次越过 500 行、或已超限文件继续变长、或超限函数变多才拦。
+  - 文件前 5 行含 standards-exempt 的由 check-limits.ps1 自行跳过。
 
 用法：由 git 通过 core.hooksPath 调用，不需要手工执行。
 确实要跳过：git commit --no-verify
@@ -37,18 +37,25 @@ function Invoke-Checker {
     return (($out | Out-String) | ConvertFrom-Json)
 }
 
-# 把检查报告压成“文件有效行 + 超限函数签名”，便于与 HEAD 版本对比
+# 把检查报告压成“文件有效行 + 超限函数清单”，便于与 HEAD 版本对比
 function Get-ViolationMap {
     param($Report)
-    $map = [pscustomobject]@{ FileLines = -1; Funcs = @{} }
+    # 判定只看“超限函数个数”：用函数名当键会因为改参数、加注解被误判成新增
+    $map = [pscustomobject]@{ FileLines = -1; Funcs = @() }
     if ($null -eq $Report) { return $map }
     $fileHits = @($Report.fileViolations | Where-Object { $null -ne $_ })
     if ($fileHits.Count -gt 0) { $map.FileLines = [int]$fileHits[0].EffectiveLines }
+    $funcs = @()
     foreach ($hit in @($Report.functionViolations)) {
         if ($null -eq $hit) { continue }
-        $sig = ($hit.Signature -replace '\s+', ' ').Trim()
-        $map.Funcs[$sig] = [int]$hit.Lines
+        $name = if ($hit.Name) { [string]$hit.Name } else { '<unknown>' }
+        $funcs += [pscustomobject]@{
+            Name      = $name
+            Lines     = [int]$hit.Lines
+            Signature = ([string]$hit.Signature -replace '\s+', ' ').Trim()
+        }
     }
+    $map.Funcs = $funcs
     return $map
 }
 
@@ -72,9 +79,9 @@ function Add-NewFileProblems {
     if ($Cur.FileLines -gt $MaxFileLines) {
         $Problems.Add("$Path : 新文件有效行 $($Cur.FileLines) > $MaxFileLines（R3）")
     }
-    foreach ($sig in $Cur.Funcs.Keys) {
-        if ($Cur.Funcs[$sig] -gt $MaxFuncLines) {
-            $Problems.Add("$Path : 新文件函数 $sig $($Cur.Funcs[$sig]) 行 > $MaxFuncLines（R2）")
+    foreach ($fn in $Cur.Funcs) {
+        if ($fn.Lines -gt $MaxFuncLines) {
+            $Problems.Add("$Path : 新文件函数 $($fn.Signature) $($fn.Lines) 行 > $MaxFuncLines（R2）")
         }
     }
 }
@@ -88,9 +95,12 @@ function Add-ExistingFileProblems {
             $Problems.Add("$Path : 存量超限文件又变长 $($Head.FileLines) -> $($Cur.FileLines)（R3）")
         }
     }
-    foreach ($sig in $Cur.Funcs.Keys) {
-        if (-not $Head.Funcs.ContainsKey($sig)) {
-            $Problems.Add("$Path : 新增超限函数 $sig $($Cur.Funcs[$sig]) 行 > $MaxFuncLines（R2）")
+    $curCount = @($Cur.Funcs).Count
+    $headCount = @($Head.Funcs).Count
+    if ($curCount -gt $headCount) {
+        $Problems.Add("$Path : 超限函数 $headCount -> $curCount 个（R2：存量不强制重写，但不得新增超限函数）")
+        foreach ($fn in $Cur.Funcs) {
+            $Problems.Add("$Path : $($fn.Signature) —— $($fn.Lines) 行 > $MaxFuncLines")
         }
     }
 }
@@ -116,6 +126,17 @@ function Write-GateFailure {
     Write-Host ''
 }
 
+# gitleaks 8.19 起用 `gitleaks git --staged`，老版本只有 protect；9.x 会移除 protect
+function Get-GitleaksArgs {
+    $verText = (& gitleaks version 2>$null | Out-String).Trim()
+    $m = [regex]::Match($verText, '(\d+)\.(\d+)')
+    if (-not $m.Success) { return @('git', '--staged') }
+    $major = [int]$m.Groups[1].Value
+    $minor = [int]$m.Groups[2].Value
+    if ($major -gt 8 -or ($major -eq 8 -and $minor -ge 19)) { return @('git', '--staged') }
+    return @('protect', '--staged')
+}
+
 # 密钥扫描：装了 gitleaks 才跑；发现疑似密钥视为 P0，直接拦
 function Test-StagedSecrets {
     param($Problems)
@@ -123,7 +144,8 @@ function Test-StagedSecrets {
         Write-Host '[code-standards] 未安装 gitleaks，跳过密钥扫描（R12 建议安装）' -ForegroundColor DarkYellow
         return
     }
-    & gitleaks protect --staged --redact --no-banner
+    $gleakArgs = Get-GitleaksArgs
+    & gitleaks @gleakArgs --redact --no-banner
     $code = $LASTEXITCODE
     if ($code -eq 1) {
         $Problems.Add('检测到疑似密钥（gitleaks），见上方输出（R12）')

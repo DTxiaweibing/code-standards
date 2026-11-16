@@ -1,7 +1,7 @@
 ---
 name: code-standards
 description: Enforce code size, structure, naming, error handling, security, testing, and dependency rules.
-version: 0.2.0
+version: 0.2.1
 author: DTxiaweibing, DeepSeek Harness
 license: MIT
 platforms: [windows, linux, macos]

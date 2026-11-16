@@ -3,6 +3,23 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-17
+
+### Fixed
+
+- `check-limits.ps1`：模板字符串 / C# 逐字串 / C++ 原生串 / Python 三引号里的单个花括号不再破坏函数帧匹配
+  （此前 `` const tpl = `WHERE {` `` 会让整段函数漏报，`}` 则会提前截断）
+- `check-limits.ps1`：`*` 不再被当作注释前缀，`*p = 1;` 这类解引用行重新计入有效行；块注释续行仍按注释处理
+- `check-limits.ps1`：函数头改用「剥离字符串与注释后的行」判定，`log(") {")` 不再被误认成函数
+- `pre-commit`：超限函数改按「数量」判定，只给存量超限函数加参数 / 改注解不再被误报为新增
+- `pre-commit`：gitleaks ≥ 8.19 改用 `gitleaks git --staged`，旧版本仍走 `protect --staged`
+
+### Added
+
+- `tests/run-tests.ps1` 新增 5 个 fixture（模板串两个方向、C 解引用行、块注释续行、C++ 原生串），
+  断言 36 项 → 56 项
+- `check-limits.ps1` 的 JSON 输出新增 `Name` 字段，供 pre-commit 稳定识别函数
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

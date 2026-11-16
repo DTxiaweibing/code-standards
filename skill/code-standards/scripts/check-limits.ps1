@@ -42,39 +42,121 @@ $defaultExts = @(
 )
 $skipDirPattern = '[\\/](node_modules|\.git|\.gradle|\.idea|build|out|dist|target|bin|obj|venv|\.venv|__pycache__|coverage|\.next|\.nuxt)[\\/]'
 
+function New-LexState {
+    # 跨行状态：块注释 / 逐字串 / 多行串（模板串、C++ 原生串、Python 三引号）
+    [pscustomobject]@{
+        InBlockComment = $false
+        Quote          = [char]0
+        Verbatim       = $false
+        Terminator     = ''
+    }
+}
+
+function Get-StringStart {
+    # 判断 $Rest 开头是不是“会跨行的字符串”，返回它的种类、终止符和起始长度
+    param([string]$Rest, [string]$Extension)
+    if ($Rest.Length -eq 0) { return $null }
+    if ($Extension -eq '.py') {
+        if ($Rest.StartsWith('"""') -or $Rest.StartsWith("'''")) {
+            return [pscustomobject]@{ Kind = 'multi'; Terminator = $Rest.Substring(0, 3); Length = 3 }
+        }
+        return $null
+    }
+    if ($Rest.StartsWith('R"')) {
+        # C++11 原生串：R"delim( ... )delim"
+        $m = [regex]::Match($Rest, '^R"(?<d>[^()\\\s]{0,16})\(')
+        if ($m.Success) {
+            return [pscustomobject]@{ Kind = 'multi'; Terminator = ')' + $m.Groups['d'].Value + '"'; Length = $m.Length }
+        }
+    }
+    if ($Rest.StartsWith('@"')) { return [pscustomobject]@{ Kind = 'verbatim'; Terminator = ''; Length = 2 } }
+    if ($Rest[0] -eq '`') { return [pscustomobject]@{ Kind = 'multi'; Terminator = '`'; Length = 1 } }
+    return $null
+}
+
+function Get-FunctionName {
+    # 从清洗后的签名里取函数名，作为 pre-commit 判定“是否新增超限函数”的稳定键
+    param([string]$Text)
+    $skip = @('async', 'function', 'if', 'for', 'foreach', 'while', 'switch', 'catch',
+        'new', 'return', 'await', 'typeof', 'sizeof', 'using', 'lock', 'synchronized')
+    foreach ($m in [regex]::Matches($Text, '([A-Za-z_$][\w$]*)\s*\(')) {
+        $name = $m.Groups[1].Value
+        if ($skip -contains $name) { continue }
+        return $name
+    }
+    $m = [regex]::Match($Text, '(?:const|let|var|val)\s+([\w$]+)')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return '<anonymous>'
+}
+
+function Get-StateAdvance {
+    # 当前字符已被某个跨行状态（多行串 / 逐字串 / 块注释 / 普通引号串）消费时返回下一个下标，否则 -1
+    param([string]$Line, [int]$Index, $State)
+    $c = $Line[$Index]
+    $rest = $Line.Substring($Index)
+
+    if ($State.Terminator) {
+        if ($c -eq '\' -and $State.Terminator -eq '`') { return $Index + 2 }
+        if ($rest.StartsWith($State.Terminator)) {
+            $len = $State.Terminator.Length
+            $State.Terminator = ''
+            return $Index + $len
+        }
+        return $Index + 1
+    }
+    if ($State.Verbatim) {
+        if ($c -ne '"') { return $Index + 1 }
+        if (($Index + 1) -lt $Line.Length -and $Line[$Index + 1] -eq '"') { return $Index + 2 }
+        $State.Verbatim = $false
+        return $Index + 1
+    }
+    if ($State.InBlockComment) {
+        if ($c -eq '*' -and ($Index + 1) -lt $Line.Length -and $Line[$Index + 1] -eq '/') {
+            $State.InBlockComment = $false
+            return $Index + 2
+        }
+        return $Index + 1
+    }
+    if ($State.Quote -ne [char]0) {
+        if ($c -eq '\') { return $Index + 2 }
+        if ($c -eq $State.Quote) { $State.Quote = [char]0 }
+        return $Index + 1
+    }
+    return -1
+}
+
 function Get-CleanedLine {
+    # 返回“只剩代码”的行：注释、字符串内容全部剔除，花括号计数才不会被子串带偏
     param(
         [string]$Line,
-        [ref]$InBlockComment
+        $State,
+        [string]$Extension
     )
     $sb = New-Object System.Text.StringBuilder
     $i = 0
-    $quote = [char]0
     while ($i -lt $Line.Length) {
+        $advance = Get-StateAdvance -Line $Line -Index $i -State $State
+        if ($advance -ge 0) { $i = $advance; continue }
+
         $c = $Line[$i]
-        if ($InBlockComment.Value) {
-            if ($c -eq '*' -and ($i + 1) -lt $Line.Length -and $Line[$i + 1] -eq '/') {
-                $InBlockComment.Value = $false
-                $i += 2
-                continue
-            }
-            $i++
-            continue
-        }
-        if ($quote -ne [char]0) {
-            if ($c -eq '\') { $i += 2; continue }
-            if ($c -eq $quote) { $quote = [char]0 }
-            $i++
+        $start = Get-StringStart -Rest $Line.Substring($i) -Extension $Extension
+        if ($start) {
+            if ($start.Kind -eq 'verbatim') { $State.Verbatim = $true }
+            elseif ($start.Terminator.Length -gt 1 -or $start.Terminator -eq '`') { $State.Terminator = $start.Terminator }
+            else { $State.Quote = [char]$start.Terminator[0] }
+            $i += $start.Length
             continue
         }
         if ($c -eq '/' -and ($i + 1) -lt $Line.Length) {
             if ($Line[$i + 1] -eq '/') { break }
-            if ($Line[$i + 1] -eq '*') { $InBlockComment.Value = $true; $i += 2; continue }
+            if ($Line[$i + 1] -eq '*') { $State.InBlockComment = $true; $i += 2; continue }
         }
-        if ($c -eq '"' -or $c -eq "'") { $quote = $c; $i++; continue }
+        if ($c -eq '"' -or $c -eq "'") { $State.Quote = $c; $i++; continue }
         [void]$sb.Append($c)
         $i++
     }
+    # 普通引号串不跨行，行尾必须复位；多行串和块注释保持状态到下一行
+    if ($State.Quote -ne [char]0) { $State.Quote = [char]0 }
     return $sb.ToString()
 }
 
@@ -97,8 +179,9 @@ function Test-IsFunctionHead {
 function Get-CommentPrefixes {
     param([string]$Extension)
     # Python 用 #；C/C++ 的 # 是预处理指令（算代码），不能当注释
+    # 块注释不在这里给前缀：单看行首的 * 会把 `*p = 1;` 这类解引用行误判成注释
     if ($Extension -eq '.py') { return @('#') }
-    return @('//', '/*', '*/', '*')
+    return @('//')
 }
 
 function Get-EffectiveLineCount {
@@ -106,13 +189,26 @@ function Get-EffectiveLineCount {
         [string[]]$Lines,
         [int]$Start,
         [int]$End,
-        [string[]]$CommentPrefixes = @('//', '/*', '*/', '*')
+        [string[]]$CommentPrefixes = @('//')
     )
     $n = 0
+    $inBlock = $false
     for ($i = $Start; $i -le $End -and $i -le $Lines.Count; $i++) {
         $l = $Lines[$i - 1].Trim()
+        if ($inBlock) {
+            $close = $l.IndexOf('*/')
+            if ($close -lt 0) { continue }
+            $l = $l.Substring($close + 2).Trim()
+            $inBlock = $false
+        }
         if ($l -eq '') { continue }
         if ($l.StartsWith('#!')) { continue }
+        if ($l.StartsWith('/*')) {
+            $close = $l.IndexOf('*/')
+            if ($close -lt 0) { $inBlock = $true; continue }
+            $l = $l.Substring($close + 2).Trim()
+            if ($l -eq '') { continue }
+        }
         $isComment = $false
         foreach ($prefix in $CommentPrefixes) {
             if ($l.StartsWith($prefix)) { $isComment = $true; break }
@@ -124,33 +220,40 @@ function Get-EffectiveLineCount {
     return $n
 }
 
+function Get-DisplaySignature {
+    # 表格里一行放得下的签名
+    param([string]$Text)
+    $sig = ($Text.Trim() -replace '\s+', ' ')
+    if ($sig.Length -gt 60) { return $sig.Substring(0, 60) + '…' }
+    return $sig
+}
+
 function Get-BraceFunctions {
-    param([string[]]$Lines, [int]$MaxFunc, [string[]]$CommentPrefixes = @('//', '/*', '*/', '*'))
+    param([string[]]$Lines, [int]$MaxFunc, [string]$Extension, [string[]]$CommentPrefixes = @('//'))
     $results = New-Object System.Collections.Generic.List[object]
     $stack = New-Object System.Collections.Generic.List[object]
-    $inBlock = $false
+    $state = New-LexState
     for ($i = 0; $i -lt $Lines.Count; $i++) {
-        $clean = Get-CleanedLine -Line $Lines[$i] -InBlockComment ([ref]$inBlock)
+        $clean = Get-CleanedLine -Line $Lines[$i] -State $state -Extension $Extension
         $opens = ([regex]::Matches($clean, '\{')).Count
         $closes = ([regex]::Matches($clean, '\}')).Count
         for ($k = 0; $k -lt $opens; $k++) {
-            $frame = @{ Line = ($i + 1); Text = $Lines[$i] }
-            $stack.Add($frame) | Out-Null
+            $stack.Add(@{ Line = ($i + 1); Text = $Lines[$i]; Clean = $clean }) | Out-Null
         }
         for ($k = 0; $k -lt $closes; $k++) {
-            if ($stack.Count -gt 0) {
-                $frame = $stack[$stack.Count - 1]
-                $stack.RemoveAt($stack.Count - 1)
-                if (Test-IsFunctionHead -Text $frame.Text) {
-                    $len = ($i + 1) - $frame.Line + 1
-                    $eff = Get-EffectiveLineCount -Lines $Lines -Start $frame.Line -End ($i + 1) -CommentPrefixes $CommentPrefixes
-                    if ($eff -gt $MaxFunc) {
-                        $name = $frame.Text.Trim()
-                        if ($name.Length -gt 60) { $name = $name.Substring(0, 60) + '…' }
-                        $results.Add([pscustomobject]@{ Line = $frame.Line; Lines = $eff; Signature = $name }) | Out-Null
-                    }
-                }
-            }
+            if ($stack.Count -eq 0) { continue }
+            $frame = $stack[$stack.Count - 1]
+            $stack.RemoveAt($stack.Count - 1)
+            # 用清洗后的行判断“是不是函数头”：字符串里的 ) { 不能算
+            if (-not (Test-IsFunctionHead -Text $frame.Clean)) { continue }
+            $eff = Get-EffectiveLineCount -Lines $Lines -Start $frame.Line -End ($i + 1) -CommentPrefixes $CommentPrefixes
+            if ($eff -le $MaxFunc) { continue }
+            $results.Add([pscustomobject]@{
+                    Line      = $frame.Line
+                    Lines     = $eff
+                    Name      = (Get-FunctionName -Text $frame.Clean)
+                    Signature = (Get-DisplaySignature -Text $frame.Text)
+                }) | Out-Null
         }
     }
     return $results
@@ -176,7 +279,9 @@ function Get-PythonFunctions {
         }
         $eff = Get-EffectiveLineCount -Lines $Lines -Start ($i + 1) -End $end -CommentPrefixes $CommentPrefixes
         if ($eff -gt $MaxFunc) {
-            $results.Add([pscustomobject]@{ Line = ($i + 1); Lines = $eff; Signature = "def $name(...)" }) | Out-Null
+            $results.Add([pscustomobject]@{
+                    Line = ($i + 1); Lines = $eff; Name = $name; Signature = "def $name(...)"
+                }) | Out-Null
         }
     }
     return $results
@@ -227,11 +332,11 @@ foreach ($f in $targets) {
     if ($ext -eq '.py') {
         $funcs = Get-PythonFunctions -Lines $lines -MaxFunc $MaxFuncLines -CommentPrefixes $commentPrefixes
     } else {
-        $funcs = Get-BraceFunctions -Lines $lines -MaxFunc $MaxFuncLines -CommentPrefixes $commentPrefixes
+        $funcs = Get-BraceFunctions -Lines $lines -MaxFunc $MaxFuncLines -Extension $ext -CommentPrefixes $commentPrefixes
     }
     foreach ($fn in $funcs) {
         $funcViolations.Add([pscustomobject]@{
-            File = $f.FullName; Line = $fn.Line; Lines = $fn.Lines; Signature = $fn.Signature
+            File = $f.FullName; Line = $fn.Line; Lines = $fn.Lines; Name = $fn.Name; Signature = $fn.Signature
         }) | Out-Null
     }
 }

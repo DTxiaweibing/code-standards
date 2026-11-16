@@ -89,6 +89,9 @@ pwsh <repo>/skill/code-standards/scripts/check-limits.ps1 -Path . -NoFail
 - eslint / checkstyle / clang-tidy 的阈值是近似护栏：Checkstyle 会把注释计入（偏严），
   ESLint 的 `skipComments` 不跳过单独 `}`。差异只在仲裁脚本不可用时参考。
 - C/C++ 的预处理指令 `#include` / `#define` 算代码行，不算注释。
+- 字符串内容不参与花括号匹配：模板串（`` ` ``）、C# 逐字串（`@"`）、C++ 原生串（`R"x(`）、
+  Python 三引号整段按字符串处理，里面的单个 `{` `}` 不会让函数帧错位。
+- 形如 `*p = 1;` 的解引用行算代码；块注释里以 `*` 开头的续行算注释——按块注释状态判断，不按行首字符猜。
 
 ## 提交门禁（pre-commit）
 
@@ -100,6 +103,7 @@ pwsh <repo>/skill/code-standards/scripts/check-limits.ps1 -Path . -NoFail
 | 存量文件本次越过 500 行 | 拦截 |
 | 已超限的存量文件继续变长（R3 净增长） | 拦截 |
 | 存量文件里新增一个 > 50 行的函数 | 拦截 |
+| 存量文件的超限函数变多（只改参数/注解不算新增） | 拦截 |
 | 暂存区出现疑似密钥（装了 gitleaks 时） | 拦截 |
 | 存量文件缩短 / 持平，或本来就超限但没变长 | 放行 |
 | 文件前 5 行写了 `standards-exempt` | 放行 |
